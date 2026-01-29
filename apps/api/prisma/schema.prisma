@@ -1,0 +1,271 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  TESORERIA
+  GERENCIA
+  SERVICIOS
+  ASOCIADO
+}
+
+enum MemberStatus {
+  Activo
+  Moroso
+  Inactivo
+  Honorario
+}
+
+enum DueStatus {
+  PENDING
+  PAID
+  WAIVED
+}
+
+enum ServiceRequestStatus {
+  RECIBIDO
+  EN_REVISION
+  OBSERVADO
+  APROBADO
+  RECHAZADO
+  FINALIZADO
+}
+
+enum EnrollmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AnnouncementSegmentType {
+  ALL
+  PROMOCION
+  ESTADO
+  REGION
+}
+
+enum DevicePlatform {
+  web
+  ios
+  android
+}
+
+model User {
+  id               Int      @id @default(autoincrement())
+  dni              String   @unique
+  passwordHash     String
+  role             Role     @default(ASOCIADO)
+  refreshTokenHash String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdPayments  Payment[] @relation("CreatedPayments")
+  validatedPayments Payment[] @relation("ValidatedPayments")
+  attachments      Attachment[]
+  serviceRequests  ServiceRequest[] @relation("ServiceRequestCreator")
+  serviceRequestsStatusUpdated ServiceRequest[] @relation("ServiceRequestStatusUpdater")
+  announcements    Announcement[] @relation("AnnouncementCreator")
+  deviceTokens     DeviceToken[]
+}
+
+model Member {
+  id            Int          @id @default(autoincrement())
+  dni           String       @unique
+  cip           String?      @unique
+  nombres       String
+  apellidos     String
+  promocion     String
+  grado         String
+  especialidad  String
+  situacion     String
+  forma_aporte  String
+  email         String?
+  celular       String?
+  telefono_casa String?
+  direccion     String?
+  distrito      String?
+  estado        MemberStatus
+  foto_url      String?
+  created_at    DateTime     @default(now())
+  updated_at    DateTime     @updatedAt
+
+  dues          Due[]
+  service_requests ServiceRequest[]
+  enrollments   Enrollment[]
+  module_progress ModuleProgress[]
+}
+
+model Service {
+  id           Int       @id @default(autoincrement())
+  name         String    @unique
+  description  String
+  requirements String?
+  schedule     String?
+  phones       String?
+  email        String?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  requests     ServiceRequest[]
+}
+
+model Course {
+  id         Int       @id @default(autoincrement())
+  title      String
+  instructor String
+  duration   String
+  image_url  String
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
+
+  modules    Module[]
+  enrollments Enrollment[]
+}
+
+model Module {
+  id          Int      @id @default(autoincrement())
+  course_id   Int
+  title       String
+  duration    String
+  description String
+  order       Int      @map("order")
+
+  course      Course   @relation(fields: [course_id], references: [id])
+  materials   Material[]
+  progresses  ModuleProgress[]
+}
+
+model Enrollment {
+  id          Int      @id @default(autoincrement())
+  member_id   Int
+  course_id   Int
+  enrolled_at DateTime @default(now())
+  status      EnrollmentStatus @default(PENDING)
+
+  member      Member   @relation(fields: [member_id], references: [id])
+  course      Course   @relation(fields: [course_id], references: [id])
+
+  @@unique([member_id, course_id])
+}
+
+model ModuleProgress {
+  id          Int       @id @default(autoincrement())
+  member_id   Int
+  module_id   Int
+  completed_at DateTime?
+
+  member      Member   @relation(fields: [member_id], references: [id])
+  module      Module   @relation(fields: [module_id], references: [id])
+
+  @@unique([member_id, module_id])
+}
+
+model Material {
+  id        Int    @id @default(autoincrement())
+  module_id Int
+  title     String
+  file_url  String
+  type      String
+
+  module    Module @relation(fields: [module_id], references: [id])
+}
+
+model ServiceRequest {
+  id                 Int                  @id @default(autoincrement())
+  member_id          Int
+  service_id         Int
+  status             ServiceRequestStatus @default(RECIBIDO)
+  requested_at       DateTime             @default(now())
+  scheduled_at       DateTime?
+  notes_member       String?
+  notes_admin        String?
+  created_by_user_id Int
+  status_updated_by_user_id Int?
+  status_updated_at  DateTime?
+
+  member             Member               @relation(fields: [member_id], references: [id])
+  service            Service              @relation(fields: [service_id], references: [id])
+  created_by_user    User                 @relation("ServiceRequestCreator", fields: [created_by_user_id], references: [id])
+  status_updated_by_user User?            @relation("ServiceRequestStatusUpdater", fields: [status_updated_by_user_id], references: [id])
+  attachments        Attachment[]
+}
+
+model Due {
+  id        Int       @id @default(autoincrement())
+  member_id Int
+  year      Int
+  month     Int
+  amount    Int
+  status    DueStatus @default(PENDING)
+  due_date  DateTime
+
+  member    Member    @relation(fields: [member_id], references: [id])
+  payments  Payment[]
+
+  @@unique([member_id, year, month])
+}
+
+model Payment {
+  id                   Int       @id @default(autoincrement())
+  due_id               Int
+  amount               Int
+  paid_at              DateTime
+  method               String
+  reference            String
+  voucher_url          String?
+  created_by_user_id   Int
+  validated_by_user_id Int?
+  validated_at         DateTime?
+
+  due                  Due       @relation(fields: [due_id], references: [id])
+  created_by_user      User      @relation("CreatedPayments", fields: [created_by_user_id], references: [id])
+  validated_by_user    User?     @relation("ValidatedPayments", fields: [validated_by_user_id], references: [id])
+  attachments          Attachment[]
+}
+
+model Attachment {
+  id                 Int      @id @default(autoincrement())
+  url                String
+  mime               String
+  size               Int
+  created_at         DateTime @default(now())
+  created_by_user_id Int
+  payment_id         Int?
+  service_request_id Int?
+
+  created_by_user    User     @relation(fields: [created_by_user_id], references: [id])
+  payment            Payment? @relation(fields: [payment_id], references: [id])
+  service_request    ServiceRequest? @relation(fields: [service_request_id], references: [id])
+}
+
+model Announcement {
+  id                 Int                     @id @default(autoincrement())
+  title              String
+  body               String
+  segment_type       AnnouncementSegmentType
+  segment_value      String?
+  created_at         DateTime                @default(now())
+  created_by_user_id Int
+
+  created_by_user    User                    @relation("AnnouncementCreator", fields: [created_by_user_id], references: [id])
+}
+
+model DeviceToken {
+  id            Int            @id @default(autoincrement())
+  user_id       Int
+  platform      DevicePlatform
+  token         String
+  created_at    DateTime       @default(now())
+  last_seen_at  DateTime       @default(now())
+
+  user          User           @relation(fields: [user_id], references: [id])
+
+  @@unique([platform, token])
+  @@index([user_id])
+}
