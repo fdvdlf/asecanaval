@@ -327,8 +327,8 @@ function LoginScreen({ onLogin }) {
       <div className="md:w-1/2 bg-slate-900 flex flex-col justify-center items-center p-10 text-white relative overflow-hidden">
         <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
         <Anchor size={80} className="mb-6 text-amber-500" />
-        <h1 className="text-4xl font-bold tracking-wider text-center">ASOMAR</h1>
-        <p className="mt-4 text-slate-300 text-center max-w-md">Asociación de Oficiales de Marina del Perú.<br /> Plataforma de Gestión Institucional.</p>
+        <h1 className="text-4xl font-bold tracking-wider text-center">ASECANAVAL</h1>
+        <p className="mt-4 text-slate-300 text-center max-w-md">Unidos por la tradición.<br /> Plataforma de Gestión Institucional.</p>
       </div>
       <div className="md:w-1/2 flex items-center justify-center p-8 bg-white">
         <div className="w-full max-w-md">
@@ -1384,7 +1384,7 @@ function Navbar({ user, onLogout, mobileMenuOpen, setMobileMenuOpen }) {
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-2">
             <Anchor className="text-amber-400" size={24} />
-            <span className="font-bold tracking-wide">ASOMAR</span>
+            <span className="font-bold tracking-wide">ASECANAVAL</span>
           </div>
           <div className="hidden md:flex items-center gap-4">
             <span className="text-sm text-slate-300">Hola, {user.grado} {user.apellidos}</span>
@@ -3234,7 +3234,7 @@ const [memberSaving, setMemberSaving] = useState(false);
       <aside className="w-64 bg-slate-900 text-slate-300 flex-shrink-0 flex flex-col shadow-2xl z-20">
         <div className="h-20 flex items-center px-6 border-b border-slate-800 font-bold text-white tracking-wider gap-3">
           <div className="bg-amber-500 p-1.5 rounded"><Anchor className="text-slate-900" size={20} /></div>
-          <span>ASOMAR</span>
+          <span>ASECANAVAL</span>
         </div>
         <div className="p-4 space-y-2 overflow-y-auto flex-1">
           <div className="text-xs font-bold text-slate-500 uppercase px-3 py-2 mt-2 tracking-wider">Principal</div>
@@ -3304,7 +3304,7 @@ const [memberSaving, setMemberSaving] = useState(false);
               {view === 'news' && 'Actualidad Internacional'}
               {view === 'config' && 'Configuración'}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">Bienvenido al sistema de gestión ASOMAR</p>
+            <p className="text-xs text-slate-500 mt-0.5">Bienvenido al sistema de gestión ASECANAVAL</p>
           </div>
           <div className="flex items-center gap-6">
             <button className="relative text-slate-400 hover:text-slate-600 transition">

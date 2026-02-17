@@ -110,15 +110,28 @@ function buildMemberKey({ fullName, promocion, grado, especialidad }) {
 async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
+  const replaceExisting = args.includes('--replace');
+  const pruneMissing = args.includes('--prune');
   const fileArgIndex = args.indexOf('--file');
-  const defaultFile = path.resolve(__dirname, '..', '..', '..', 'padron.csv');
-  const filePath = fileArgIndex !== -1 && args[fileArgIndex + 1]
-    ? path.resolve(process.cwd(), args[fileArgIndex + 1])
-    : defaultFile;
+  const repoRoot = path.resolve(__dirname, '..', '..', '..');
+  const envFile = process.env.PADRON_CSV_PATH;
+  const defaultFile = path.join(repoRoot, 'padron.csv');
+  const resolveFromRoot = (value) =>
+    path.isAbsolute(value) ? value : path.resolve(repoRoot, value);
+
+  let filePath = defaultFile;
+  if (envFile) {
+    filePath = resolveFromRoot(envFile);
+  }
+  if (fileArgIndex !== -1 && args[fileArgIndex + 1]) {
+    filePath = resolveFromRoot(args[fileArgIndex + 1]);
+  }
 
   if (!fs.existsSync(filePath)) {
     throw new Error(`No se encuentra el archivo: ${filePath}`);
   }
+
+  console.log(`Archivo de padron: ${filePath}`);
 
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
@@ -141,22 +154,24 @@ async function main() {
 
   const isFullFormat = hasAnyHeader(HEADER_ALIASES.dni);
 
-  const requiredAliases = isFullFormat
+  const requiredGroups = isFullFormat
     ? [
-      ...HEADER_ALIASES.dni,
-      ...HEADER_ALIASES.fullName,
-      ...HEADER_ALIASES.promocion,
-      ...HEADER_ALIASES.grado,
-      ...HEADER_ALIASES.especialidad,
+      HEADER_ALIASES.dni,
+      HEADER_ALIASES.fullName,
+      HEADER_ALIASES.promocion,
+      HEADER_ALIASES.grado,
+      HEADER_ALIASES.especialidad,
     ]
     : [
-      ...HEADER_ALIASES.fullName,
-      ...HEADER_ALIASES.promocion,
-      ...HEADER_ALIASES.grado,
-      ...HEADER_ALIASES.especialidad,
+      HEADER_ALIASES.fullName,
+      HEADER_ALIASES.promocion,
+      HEADER_ALIASES.grado,
+      HEADER_ALIASES.especialidad,
     ];
 
-  const missingHeaders = requiredAliases.filter((alias) => !normalizedHeaderIndex.has(alias));
+  const missingHeaders = requiredGroups
+    .filter((aliases) => !aliases.some((alias) => normalizedHeaderIndex.has(alias)))
+    .map((aliases) => aliases.join('/'));
   if (missingHeaders.length) {
     throw new Error(
       `Faltan columnas requeridas para el formato ${isFullFormat ? 'completo' : 'basico'}: ` +
@@ -169,17 +184,24 @@ async function main() {
   console.log(`Columnas encontradas: ${headers.join(' | ')}`);
 
   const [existingMembers, existingUsers] = await Promise.all([
-    prisma.member.findMany({ select: { dni: true, cip: true } }),
+    prisma.member.findMany({ select: { id: true, dni: true, cip: true } }),
     prisma.user.findMany({ select: { dni: true } }),
   ]);
 
   const existingMemberDnis = new Set(existingMembers.map((item) => item.dni));
   const existingUserDnis = new Set(existingUsers.map((item) => item.dni));
+  const existingCipToDni = new Map(
+    existingMembers
+      .filter((item) => item.cip)
+      .map((item) => [item.cip, item.dni]),
+  );
   const seenDnis = new Set();
   const duplicates = [];
   const skipped = [];
   const inserted = [];
+  const updated = [];
   const errors = [];
+  const seenCips = new Map();
 
   for (let i = 1; i < lines.length; i += 1) {
     const row = parseCsvLine(lines[i]);
@@ -224,7 +246,9 @@ async function main() {
     }
     seenDnis.add(dni);
 
-    if (existingMemberDnis.has(dni) || existingUserDnis.has(dni)) {
+    const hasExistingMember = existingMemberDnis.has(dni);
+    const hasExistingUser = existingUserDnis.has(dni);
+    if ((hasExistingMember || hasExistingUser) && !replaceExisting) {
       duplicates.push({ dni, reason: 'Ya existe en la base' });
       continue;
     }
@@ -235,10 +259,26 @@ async function main() {
     const telefonos = toOptional(getValueByAliases(HEADER_ALIASES.telefonos));
     const celular = toOptional(getValueByAliases(HEADER_ALIASES.celular)) || telefonos;
     const telefonoCasa = toOptional(getValueByAliases(HEADER_ALIASES.telefonoCasa));
+    const cipValue = toOptional(getValueByAliases(HEADER_ALIASES.cip));
+
+    let cipForCreate = cipValue;
+    let cipForUpdate = cipValue;
+    if (cipValue) {
+      const existingOwner = existingCipToDni.get(cipValue);
+      const seenOwner = seenCips.get(cipValue);
+      const conflictDni = existingOwner || seenOwner;
+      if (conflictDni && conflictDni !== dni) {
+        cipForCreate = null;
+        cipForUpdate = undefined;
+        skipped.push({ row: i + 1, reason: `CIP duplicado (${cipValue})` });
+      } else {
+        seenCips.set(cipValue, dni);
+      }
+    }
 
     const memberData = {
       dni,
-      cip: toOptional(getValueByAliases(HEADER_ALIASES.cip)),
+      cip: cipForCreate,
       nombres: nameParts.nombres || fullName,
       apellidos: nameParts.apellidos || fullName,
       promocion: promocion || fallbackText,
@@ -254,25 +294,57 @@ async function main() {
       estado: MemberStatus.Activo,
       foto_url: null,
     };
+    const memberUpdateData = {
+      ...memberData,
+      cip: cipForUpdate,
+    };
 
     if (dryRun) {
-      inserted.push(dni);
+      if (hasExistingMember || hasExistingUser) {
+        updated.push(dni);
+      } else {
+        inserted.push(dni);
+      }
       continue;
     }
 
     try {
       const passwordHash = await bcrypt.hash(dni, 10);
-      await prisma.$transaction([
-        prisma.member.create({ data: memberData }),
-        prisma.user.create({
-          data: {
-            dni,
-            passwordHash,
-            role: Role.ASOCIADO,
-          },
-        }),
-      ]);
-      inserted.push(dni);
+      if (replaceExisting) {
+        await prisma.$transaction([
+          prisma.member.upsert({
+            where: { dni },
+            update: memberUpdateData,
+            create: memberData,
+          }),
+          prisma.user.upsert({
+            where: { dni },
+            update: {},
+            create: {
+              dni,
+              passwordHash,
+              role: Role.ASOCIADO,
+            },
+          }),
+        ]);
+        if (hasExistingMember || hasExistingUser) {
+          updated.push(dni);
+        } else {
+          inserted.push(dni);
+        }
+      } else {
+        await prisma.$transaction([
+          prisma.member.create({ data: memberData }),
+          prisma.user.create({
+            data: {
+              dni,
+              passwordHash,
+              role: Role.ASOCIADO,
+            },
+          }),
+        ]);
+        inserted.push(dni);
+      }
     } catch (error) {
       errors.push({ dni, message: error.message || String(error) });
     }
@@ -280,6 +352,7 @@ async function main() {
 
   console.log(`Total filas: ${lines.length - 1}`);
   console.log(`Insertados: ${inserted.length}`);
+  console.log(`Actualizados: ${updated.length}`);
   console.log(`Duplicados: ${duplicates.length}`);
   console.log(`Saltados: ${skipped.length}`);
   if (errors.length) {
@@ -302,6 +375,75 @@ async function main() {
     errors.forEach((item) => {
       console.log(`- ${item.dni}: ${item.message}`);
     });
+  }
+
+  if (pruneMissing) {
+    const membersToDelete = existingMembers.filter((member) => !seenDnis.has(member.dni));
+    console.log(`Por eliminar (no estan en padron): ${membersToDelete.length}`);
+    if (!membersToDelete.length) {
+      return;
+    }
+    if (dryRun) {
+      return;
+    }
+
+    const chunkSize = 200;
+    const chunk = (list, size) => {
+      const result = [];
+      for (let i = 0; i < list.length; i += size) {
+        result.push(list.slice(i, i + size));
+      }
+      return result;
+    };
+
+    for (const batch of chunk(membersToDelete, chunkSize)) {
+      const memberIds = batch.map((member) => member.id);
+      const memberDnis = batch.map((member) => member.dni);
+
+      const dueIds = await prisma.due
+        .findMany({ where: { member_id: { in: memberIds } }, select: { id: true } })
+        .then((rows) => rows.map((row) => row.id));
+
+      const serviceRequestIds = await prisma.serviceRequest
+        .findMany({ where: { member_id: { in: memberIds } }, select: { id: true } })
+        .then((rows) => rows.map((row) => row.id));
+
+      if (serviceRequestIds.length) {
+        await prisma.attachment.deleteMany({
+          where: { service_request_id: { in: serviceRequestIds } },
+        });
+      }
+
+      if (dueIds.length) {
+        const paymentIds = await prisma.payment
+          .findMany({ where: { due_id: { in: dueIds } }, select: { id: true } })
+          .then((rows) => rows.map((row) => row.id));
+
+        if (paymentIds.length) {
+          await prisma.attachment.deleteMany({ where: { payment_id: { in: paymentIds } } });
+        }
+        await prisma.payment.deleteMany({ where: { due_id: { in: dueIds } } });
+      }
+
+      await prisma.due.deleteMany({ where: { member_id: { in: memberIds } } });
+      await prisma.moduleProgress.deleteMany({ where: { member_id: { in: memberIds } } });
+      await prisma.enrollment.deleteMany({ where: { member_id: { in: memberIds } } });
+      await prisma.serviceRequest.deleteMany({ where: { member_id: { in: memberIds } } });
+      await prisma.member.deleteMany({ where: { id: { in: memberIds } } });
+
+      const userIds = await prisma.user
+        .findMany({
+          where: { dni: { in: memberDnis }, role: Role.ASOCIADO },
+          select: { id: true },
+        })
+        .then((rows) => rows.map((row) => row.id));
+
+      if (userIds.length) {
+        await prisma.deviceToken.deleteMany({ where: { user_id: { in: userIds } } });
+        await prisma.attachment.deleteMany({ where: { created_by_user_id: { in: userIds } } });
+        await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+      }
+    }
   }
 }
 

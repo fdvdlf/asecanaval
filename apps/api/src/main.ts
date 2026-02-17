@@ -21,8 +21,8 @@ async function bootstrap() {
   app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
 
   const config = new DocumentBuilder()
-    .setTitle('ASOMAR API')
-    .setDescription('API para ASOMAR')
+    .setTitle('ASECANAVAL API')
+    .setDescription('API para ASECANAVAL - Unidos por la tradición')
     .setVersion('1.0.0')
     .addBearerAuth()
     .build();
